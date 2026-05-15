@@ -63,9 +63,14 @@ fi
 # Настройка зеркал (Россия)
 # ============================================
 print_header "Настройка зеркал"
-print_info "Обновление зеркал для России..."
-pacman -Sy --noconfirm reflector
-reflector --country Russia,Germany,Netherlands --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+print_info "Установка российских зеркал..."
+cat > /etc/pacman.d/mirrorlist << 'MIRROR_EOF'
+Server = https://mirror.yandex.ru/archlinux/$repo/os/$arch
+Server = https://mirror.truenetwork.ru/archlinux/$repo/os/$arch
+Server = https://archlinux.arkane.online/$repo/os/$arch
+Server = https://mirror.rol.ru/archlinux/$repo/os/$arch
+MIRROR_EOF
+pacman -Sy
 print_success "Зеркала обновлены"
 
 # ============================================
@@ -164,10 +169,25 @@ print_success "fstab создан"
 # ============================================
 print_header "Настройка системы"
 
-# Создаем скрипт для выполнения внутри chroot
+# Создаем скрипт для выполнения внутри chroot - ВСЕ функции встроены!
 cat > /mnt/root/chroot_setup.sh << 'CHROOT_EOF'
 #!/bin/bash
 set -e
+
+# Встроенные функции (не зависят от внешнего скрипта)
+print_header() {
+    echo "========================================"
+    echo "$1"
+    echo "========================================"
+}
+
+print_info() {
+    echo "[INFO] $1"
+}
+
+print_success() {
+    echo "[OK] $1"
+}
 
 # Локаль
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
@@ -222,6 +242,9 @@ fi
 # Перегенерация GRUB с микрокодом
 grub-mkconfig -o /boot/grub/grub.cfg
 
+# Сохраняем имя пользователя для следующего скрипта
+echo "$USERNAME" > /root/.install_username
+
 print_success "Настройка chroot завершена!"
 CHROOT_EOF
 
@@ -237,14 +260,15 @@ print_success "Базовая система настроена"
 # ============================================
 print_header "Установка Hyprland и окружения"
 
-cat > /mnt/root/hyprland_setup.sh << 'HYPR_EOF'
+# Получаем имя пользователя
+USERNAME=$(cat /mnt/root/.install_username 2>/dev/null || ls /mnt/home | head -n1)
+
+# Создаем скрипт для Hyprland - ВСЕ функции встроены!
+cat > /mnt/root/hyprland_setup.sh << HYPR_EOF
 #!/bin/bash
 set -e
 
-# Получаем имя пользователя
-USERNAME=$(ls /home | head -n1)
-USER_HOME="/home/$USERNAME"
-
+# Встроенные функции
 print_header() {
     echo "========================================"
     echo "$1"
@@ -259,11 +283,17 @@ print_success() {
     echo "[OK] $1"
 }
 
-# Обновление системы
+print_warning() {
+    echo "[WARN] $1"
+}
+
+# Получаем имя пользователя
+USERNAME=$(cat /root/.install_username 2>/dev/null || ls /home | head -n1)
+USER_HOME="/home/\$USERNAME"
+
 print_header "Обновление системы"
 pacman -Syu --noconfirm
 
-# Установка Hyprland и зависимостей
 print_header "Установка Hyprland"
 pacman -S --noconfirm hyprland waybar wofi kitty mako polkit-gnome \
     pipewire pipewire-pulse pipewire-jack wireplumber pavucontrol \
@@ -277,15 +307,15 @@ pacman -S --noconfirm hyprland waybar wofi kitty mako polkit-gnome \
     xdg-user-dirs
 
 # Создание стандартных папок
-su - "$USERNAME" -c "xdg-user-dirs-update"
+su - "\$USERNAME" -c "xdg-user-dirs-update"
 
 # AUR Helper (yay)
 print_header "Установка yay (AUR helper)"
-su - "$USERNAME" -c "cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
+su - "\$USERNAME" -c "cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
 
 # Установка пакетов из AUR
 print_header "Установка пакетов из AUR"
-su - "$USERNAME" -c "yay -S --noconfirm rofi-lbonn-wayland catppuccin-gtk-theme-mocha \
+su - "\$USERNAME" -c "yay -S --noconfirm rofi-lbonn-wayland catppuccin-gtk-theme-mocha \
     bibata-cursor-theme-bin swaylock-effects wlogout sddm-catppuccin-git"
 
 # SDDM (менеджер входа)
@@ -295,7 +325,7 @@ systemctl enable sddm
 
 # Настройка PipeWire
 print_info "Настройка PipeWire..."
-systemctl --user -M "$USERNAME@" enable pipewire pipewire-pulse
+su - "\$USERNAME" -c "systemctl --user enable pipewire pipewire-pulse"
 
 print_success "Hyprland установлен"
 HYPR_EOF
@@ -308,7 +338,7 @@ arch-chroot /mnt /root/hyprland_setup.sh
 # ============================================
 print_header "Создание конфигурационных файлов"
 
-USERNAME=$(ls /mnt/home | head -n1)
+USERNAME=$(cat /mnt/root/.install_username 2>/dev/null || ls /mnt/home | head -n1)
 USER_HOME="/mnt/home/$USERNAME"
 CONFIG_DIR="$USER_HOME/.config"
 
@@ -1113,7 +1143,6 @@ alias install='sudo pacman -S'
 alias remove='sudo pacman -Rns'
 alias search='pacman -Ss'
 alias cls='clear'
-alias cat='bat --style=plain --paging=never'
 
 # Переменные окружения
 export EDITOR=nvim
@@ -1130,9 +1159,6 @@ export _JAVA_AWT_WM_NONREPARENTING=1
 # NVM (если установите Node.js позже)
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-# FZF (если установите позже)
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 EOF
 
 # Установка zsh по умолчанию
@@ -1163,11 +1189,7 @@ chown -R "$USERNAME:$USERNAME" "$USER_HOME/.icons"
 # ============================================
 print_info "Загрузка обоев..."
 
-# Простой градиентный wallpaper через imagemagick (если доступен)
-# Или скачиваем готовый
 if command -v curl &> /dev/null; then
-    curl -L -o "$USER_HOME/Pictures/wallpapers/wallpaper.jpg" \
-        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=2560&q=80" 2>/dev/null || \
     curl -L -o "$USER_HOME/Pictures/wallpapers/wallpaper.jpg" \
         "https://raw.githubusercontent.com/catppuccin/wallpapers/main/misc/gradient-blue.png" 2>/dev/null || true
 fi
@@ -1182,6 +1204,7 @@ print_header "Финализация установки"
 # Очистка
 rm -f /mnt/root/chroot_setup.sh
 rm -f /mnt/root/hyprland_setup.sh
+rm -f /mnt/root/.install_username
 
 # Размонтирование
 umount -R /mnt
