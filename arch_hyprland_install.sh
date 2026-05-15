@@ -106,10 +106,38 @@ else
     ROOT_PART="${DISK}2"
 fi
 
+# ============================================
+# Принудительная очистка (если диск занят)
+# ============================================
+print_info "Проверка и очистка диска..."
+
+# Размонтируем всё что связано с этим диском
+for mountpoint in $(findmnt -n -o TARGET -S "$DISK" 2>/dev/null); do
+    print_info "Размонтирование: $mountpoint"
+    umount -R "$mountpoint" 2>/dev/null || umount -lf "$mountpoint" 2>/dev/null || true
+done
+
+# Отключаем swap
+swapoff "$EFI_PART" 2>/dev/null || true
+swapoff "$ROOT_PART" 2>/dev/null || true
+swapoff ${DISK}* 2>/dev/null || true
+
+# Убиваем процессы которые используют диск
+if command -v fuser &> /dev/null; then
+    fuser -km "$DISK" 2>/dev/null || true
+fi
+
+# Отключаем LVM если есть
+vgchange -an 2>/dev/null || true
+
+# Синхронизация
+sync
+sleep 2
+
 print_info "Разметка диска $DISK..."
 
-# Создаем новую таблицу разделов GPT
-parted -s "$DISK" mklabel gpt
+# Создаем новую таблицу разделов GPT (принудительно)
+parted -s "$DISK" mklabel gpt 2>/dev/null || (dd if=/dev/zero of="$DISK" bs=512 count=2048 && parted -s "$DISK" mklabel gpt)
 
 # EFI раздел (512MB)
 parted -s "$DISK" mkpart primary fat32 1MiB 513MiB
@@ -129,7 +157,7 @@ print_info "Форматирование EFI раздела..."
 mkfs.fat -F32 "$EFI_PART"
 
 print_info "Форматирование Root раздела..."
-mkfs.ext4 "$ROOT_PART"
+mkfs.ext4 -F "$ROOT_PART"
 
 print_success "Форматирование завершено"
 
@@ -137,6 +165,9 @@ print_success "Форматирование завершено"
 # Монтирование
 # ============================================
 print_header "Монтирование разделов"
+
+# Убедимся что ничего не смонтировано в /mnt
+umount -R /mnt 2>/dev/null || true
 
 mount "$ROOT_PART" /mnt
 mkdir -p /mnt/boot
@@ -299,12 +330,12 @@ pacman -S --noconfirm hyprland waybar wofi kitty mako polkit-gnome \
     pipewire pipewire-pulse pipewire-jack wireplumber pavucontrol \
     thunar thunar-archive-plugin gvfs gvfs-mtp ttf-jetbrains-mono-nerd \
     noto-fonts noto-fonts-cjk noto-fonts-emoji \
-    xdg-desktop-portal-hyprland grimblast wl-clipboard \
+    xdg-desktop-portal-hyprland grim slurp wl-clipboard \
     swww hyprpaper brightnessctl pamixer \
     zsh zsh-completions zsh-syntax-highlighting zsh-autosuggestions \
     git curl wget neovim firefox \
-    papirus-icon-theme arc-gtk-theme \
-    xdg-user-dirs
+    papirus-icon-theme \
+    xdg-user-dirs sddm
 
 # Создание стандартных папок
 su - "\$USERNAME" -c "xdg-user-dirs-update"
@@ -495,9 +526,9 @@ bind = $mainMod SHIFT, 0, movetoworkspace, 10
 bind = $mainMod, S, togglespecialworkspace, magic
 bind = $mainMod SHIFT, S, movetoworkspace, special:magic
 
-# Скриншоты
-bind = $mainMod SHIFT, S, exec, grimblast --notify copy area
-bind = $mainMod, Print, exec, grimblast --notify save screen ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+# Скриншоты (grim + slurp вместо grimblast)
+bind = $mainMod SHIFT, S, exec, grim -g "$(slurp)" - | wl-copy
+bind = $mainMod, Print, exec, grim ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
 
 # Громкость/яркость
 bindel = ,XF86AudioRaiseVolume, exec, pamixer -i 5
