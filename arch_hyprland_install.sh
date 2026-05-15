@@ -135,66 +135,24 @@ sync
 sleep 2
 
 # ============================================
-# ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ УСТРОЙСТВА ИЗ ЯДРА
+# ОЧИСТКА ДИСКА БЕЗ УДАЛЕНИЯ ИЗ ЯДРА
 # ============================================
-print_info "Принудительное удаление устройства из ядра..."
+print_info "Очистка сигнатур файловых систем..."
 
-# Получаем имя устройства без /dev/
-DEVICE_NAME=$(basename "$DISK")
+# Устанавливаем wipefs если нет
+pacman -S --noconfirm util-linux 2>/dev/null || true
 
-# Удаляем устройство из ядра
-if [[ -f "/sys/block/$DEVICE_NAME/device/delete" ]]; then
-    print_info "Удаление $DEVICE_NAME из ядра..."
-    echo 1 > "/sys/block/$DEVICE_NAME/device/delete" 2>/dev/null || true
-    sleep 2
+# Очищаем сигнатуры на всем диске
+if command -v wipefs &> /dev/null; then
+    wipefs -af "$DISK" 2>/dev/null || true
 fi
 
-# Пересканируем шины
-for host in /sys/class/scsi_host/host*/scan; do
-    if [[ -f "$host" ]]; then
-        echo "- - -" > "$host" 2>/dev/null || true
-    fi
-done
+# Очищаем заголовок диска
+print_info "Очистка заголовка диска..."
+dd if=/dev/zero of="$DISK" bs=512 count=2048 status=progress
+sync
 
-# Для NVMe — пересканируем контроллер
-if [[ "$DISK" == *"nvme"* ]]; then
-    CONTROLLER=$(echo "$DEVICE_NAME" | sed 's/n[0-9]*$//')
-    if [[ -f "/sys/class/nvme/$CONTROLLER/rescan_controller" ]]; then
-        echo 1 > "/sys/class/nvme/$CONTROLLER/rescan_controller" 2>/dev/null || true
-    fi
-    # Альтернативный способ для NVMe
-    if [[ -d "/sys/bus/pci/drivers/nvme" ]]; then
-        for dev in /sys/bus/pci/drivers/nvme/*/remove; do
-            if [[ -f "$dev" ]]; then
-                echo 1 > "$dev" 2>/dev/null || true
-            fi
-        done
-        sleep 1
-        for dev in /sys/bus/pci/drivers/nvme/*/rescan; do
-            if [[ -f "$dev" ]]; then
-                echo 1 > "$dev" 2>/dev/null || true
-            fi
-        done
-    fi
-fi
-
-# Ждем пока устройство появится снова
-print_info "Ожидание повторного обнаружения устройства..."
-for i in {1..15}; do
-    if [[ -b "$DISK" ]]; then
-        print_success "Устройство $DISK обнаружено"
-        break
-    fi
-    print_info "Ожидание устройства (попытка $i/15)..."
-    sleep 1
-done
-
-if [[ ! -b "$DISK" ]]; then
-    print_error "Устройство $DISK не обнаружено! Попробуйте перезагрузиться."
-    exit 1
-fi
-
-# Обновляем таблицу разделов
+# Обновляем таблицу разделов в ядре
 if command -v partprobe &> /dev/null; then
     partprobe "$DISK" 2>/dev/null || true
 fi
@@ -205,11 +163,6 @@ fi
 sleep 2
 
 print_info "Разметка диска $DISK..."
-
-# Очищаем заголовок диска
-print_info "Очистка заголовка диска..."
-dd if=/dev/zero of="$DISK" bs=512 count=2048 status=progress
-sync
 
 # Создаем новую таблицу разделов GPT
 parted -s "$DISK" mklabel gpt
