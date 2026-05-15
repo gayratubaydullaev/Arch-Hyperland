@@ -136,8 +136,18 @@ sleep 2
 
 print_info "Разметка диска $DISK..."
 
-# Создаем новую таблицу разделов GPT (принудительно)
-parted -s "$DISK" mklabel gpt 2>/dev/null || (dd if=/dev/zero of="$DISK" bs=512 count=2048 && parted -s "$DISK" mklabel gpt)
+# Принудительно обновляем таблицу разделов перед разметкой
+if command -v partprobe &> /dev/null; then
+    partprobe "$DISK" 2>/dev/null || true
+fi
+
+# Очищаем заголовок диска
+print_info "Очистка заголовка диска..."
+dd if=/dev/zero of="$DISK" bs=512 count=2048 status=progress
+sync
+
+# Создаем новую таблицу разделов GPT
+parted -s "$DISK" mklabel gpt
 
 # EFI раздел (512MB)
 parted -s "$DISK" mkpart primary fat32 1MiB 513MiB
@@ -145,6 +155,37 @@ parted -s "$DISK" set 1 esp on
 
 # Root раздел (всё оставшееся место)
 parted -s "$DISK" mkpart primary ext4 513MiB 100%
+
+# Принудительно обновляем таблицу разделов в ядре
+print_info "Обновление таблицы разделов в ядре..."
+if command -v partprobe &> /dev/null; then
+    partprobe "$DISK" 2>/dev/null || true
+fi
+if command -v blockdev &> /dev/null; then
+    blockdev --rereadpt "$DISK" 2>/dev/null || true
+fi
+
+# Ждем пока ядро увидит новые разделы
+print_info "Ожидание обнаружения разделов ядром..."
+sleep 3
+
+# Проверяем что разделы появились
+for i in {1..10}; do
+    if [[ -b "$EFI_PART" && -b "$ROOT_PART" ]]; then
+        print_success "Разделы обнаружены: $EFI_PART, $ROOT_PART"
+        break
+    fi
+    print_info "Ожидание разделов (попытка $i/10)..."
+    sleep 1
+    # Повторно обновляем
+    partprobe "$DISK" 2>/dev/null || true
+    blockdev --rereadpt "$DISK" 2>/dev/null || true
+done
+
+if [[ ! -b "$EFI_PART" || ! -b "$ROOT_PART" ]]; then
+    print_error "Разделы не обнаружены! Попробуйте перезагрузиться и запустить скрипт заново."
+    exit 1
+fi
 
 print_success "Разметка завершена"
 
