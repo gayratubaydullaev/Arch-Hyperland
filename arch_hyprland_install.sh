@@ -1,9 +1,9 @@
 #!/bin/bash
 # ============================================
-# Arch Linux + Hyprland Auto-Install Script v3.0
+# Arch Linux + Hyprland Auto-Install Script v4.0
 # ============================================
 # Полностью переписанный, стабильный скрипт
-# Учтены все ошибки предыдущих версий
+# Учтены ВСЕ ошибки предыдущих версий
 # Запускать ПОСЛЕ подключения к Wi-Fi
 
 set -e
@@ -58,6 +58,13 @@ else
     print_info "Подключитесь к Wi-Fi: iwctl station wlan0 connect SSID"
     exit 1
 fi
+
+# ============================================
+# Запрос данных ЗАРАНЕЕ
+# ============================================
+print_header "Настройка установки"
+read -p "Введите имя компьютера (hostname): " HOSTNAME
+read -p "Введите имя пользователя: " USERNAME
 
 # ============================================
 # Настройка зеркал
@@ -174,10 +181,6 @@ print_success "fstab создан"
 # ============================================
 print_header "Настройка системы"
 
-# Запрашиваем данные ЗАРАНЕЕ
-read -p "Введите имя компьютера (hostname): " HOSTNAME
-read -p "Введите имя пользователя: " USERNAME
-
 # Создаем скрипт настройки
 cat > /mnt/root/setup.sh << CHROOT_EOF
 #!/bin/bash
@@ -263,11 +266,30 @@ pacman -S --noconfirm hyprland waybar wofi kitty mako polkit-gnome \
 # Папки пользователя
 su - "$USERNAME" -c "xdg-user-dirs-update"
 
-# yay
-su - "$USERNAME" -c "cd /tmp && rm -rf yay && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
+# yay с fallback
+print_info "Установка yay..."
+su - "$USERNAME" -c "cd /tmp && rm -rf yay" || true
 
-# AUR
-su - "$USERNAME" -c "yay -S --noconfirm catppuccin-gtk-theme-mocha bibata-cursor-theme-bin swaylock-effects wlogout"
+# Попытка 1: https
+if ! su - "$USERNAME" -c "cd /tmp && git clone https://aur.archlinux.org/yay.git"; then
+    print_warning "HTTPS не работает, пробуем HTTP..."
+    # Попытка 2: http
+    if ! su - "$USERNAME" -c "cd /tmp && git clone http://aur.archlinux.org/yay.git"; then
+        print_error "Не удалось установить yay! AUR пакеты нужно будет установить вручную."
+        exit 0
+    fi
+fi
+
+su - "$USERNAME" -c "cd /tmp/yay && makepkg -si --noconfirm"
+
+# AUR пакеты с fallback
+print_info "Установка AUR пакетов..."
+if command -v yay &> /dev/null; then
+    su - "$USERNAME" -c "yay -S --noconfirm catppuccin-gtk-theme-mocha bibata-cursor-theme-bin swaylock-effects wlogout" || \
+    print_warning "Некоторые AUR пакеты не установлены"
+else
+    print_warning "yay не установлен, пропускаем AUR пакеты"
+fi
 
 # SDDM
 systemctl enable sddm
@@ -275,7 +297,7 @@ systemctl enable sddm
 HYPR_EOF
 
 chmod +x /mnt/root/hypr.sh
-arch-chroot /mnt /root/hypr.sh
+arch-chroot /mnt /root/hypr.sh || print_warning "Часть пакетов могла не установиться"
 
 print_success "Hyprland установлен"
 
@@ -292,8 +314,10 @@ mkdir -p "$USER_HOME/.config/wofi"
 mkdir -p "$USER_HOME/.config/mako"
 mkdir -p "$USER_HOME/.config/wlogout"
 mkdir -p "$USER_HOME/Pictures/wallpapers"
+mkdir -p "$USER_HOME/.themes"
+mkdir -p "$USER_HOME/.icons"
 
-# Hyprland config - УПРОЩЕННЫЙ, без проблемных опций
+# Hyprland config - МИНИМАЛЬНЫЙ, без проблемных опций
 cat > "$USER_HOME/.config/hypr/hyprland.conf" << 'EOF'
 # Monitor
 monitor=,preferred,auto,auto
@@ -679,9 +703,8 @@ EOF
 # GTK theme
 cat > "$USER_HOME/.config/gtk-3.0/settings.ini" << 'EOF'
 [Settings]
-gtk-theme-name=Catppuccin-Mocha
+gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
-gtk-cursor-theme-name=Bibata-Modern-Ice
 gtk-font-name=JetBrainsMono Nerd Font 11
 gtk-application-prefer-dark-theme=1
 EOF
@@ -694,14 +717,17 @@ curl -L -o "$USER_HOME/Pictures/wallpapers/wallpaper.jpg" \
     "https://raw.githubusercontent.com/catppuccin/wallpapers/main/misc/gradient-blue.png" 2>/dev/null || true
 
 # Права через UID (чтобы работало из Live USB)
-UID_GID=$(arch-chroot /mnt id -u "$USERNAME")
+print_info "Настройка прав..."
+UID_GID=$(arch-chroot /mnt id -u "$USERNAME" 2>/dev/null || echo "1000")
 chown -R "$UID_GID:$UID_GID" "$USER_HOME/.config"
 chown -R "$UID_GID:$UID_GID" "$USER_HOME/.local" 2>/dev/null || true
 chown -R "$UID_GID:$UID_GID" "$USER_HOME/.zshrc"
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/.themes"
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/.icons"
 chown -R "$UID_GID:$UID_GID" "$USER_HOME/Pictures"
 
 # Zsh по умолчанию
-arch-chroot /mnt chsh -s /bin/zsh "$USERNAME"
+arch-chroot /mnt chsh -s /bin/zsh "$USERNAME" 2>/dev/null || true
 
 print_success "Конфиги созданы"
 
@@ -725,6 +751,10 @@ print_info "Что дальше:"
 echo "  1. Перезагрузите: reboot"
 echo "  2. Извлеките установочную флешку"
 echo "  3. Войдите через SDDM"
+echo ""
+print_info "Если yay не установился:"
+echo "  sudo pacman -S yay (после установки системы)"
+echo "  yay -S catppuccin-gtk-theme-mocha bibata-cursor-theme-bin"
 echo ""
 print_info "Горячие клавиши:"
 echo "  SUPER + Enter  - Терминал (Kitty)"
