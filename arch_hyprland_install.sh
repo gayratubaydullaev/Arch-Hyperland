@@ -1,10 +1,8 @@
 #!/bin/bash
 # ============================================
-# Arch Linux + Hyprland Auto-Install Script v4.0
+# Arch Linux + Hyprland Auto-Install Script v4.1
 # ============================================
-# Полностью переписанный, стабильный скрипт
-# Учтены ВСЕ ошибки предыдущих версий
-# Запускать ПОСЛЕ подключения к Wi-Fi
+# ИСПРАВЛЕННАЯ ВЕРСИЯ
 
 set -e
 
@@ -186,6 +184,19 @@ cat > /mnt/root/setup.sh << CHROOT_EOF
 #!/bin/bash
 set -e
 
+# Цвета для chroot
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+print_info() { echo -e "\${BLUE}[INFO]\${NC} \$1"; }
+print_success() { echo -e "\${GREEN}[OK]\${NC} \$1"; }
+print_warning() { echo -e "\${YELLOW}[WARN]\${NC} \$1"; }
+print_error() { echo -e "\${RED}[ERROR]\${NC} \$1"; }
+
 # Локаль
 locale-gen
 
@@ -250,6 +261,19 @@ cat > /mnt/root/hypr.sh << HYPR_EOF
 #!/bin/bash
 set -e
 
+# Цвета для chroot
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+print_info() { echo -e "\${BLUE}[INFO]\${NC} \$1"; }
+print_success() { echo -e "\${GREEN}[OK]\${NC} \$1"; }
+print_warning() { echo -e "\${YELLOW}[WARN]\${NC} \$1"; }
+print_error() { echo -e "\${RED}[ERROR]\${NC} \$1"; }
+
 # Обновление
 pacman -Syu --noconfirm
 
@@ -313,6 +337,8 @@ mkdir -p "$USER_HOME/.config/kitty"
 mkdir -p "$USER_HOME/.config/wofi"
 mkdir -p "$USER_HOME/.config/mako"
 mkdir -p "$USER_HOME/.config/wlogout"
+mkdir -p "$USER_HOME/.config/gtk-3.0"      # ← ИСПРАВЛЕНО
+mkdir -p "$USER_HOME/.config/gtk-4.0"      # ← ИСПРАВЛЕНО
 mkdir -p "$USER_HOME/Pictures/wallpapers"
 mkdir -p "$USER_HOME/.themes"
 mkdir -p "$USER_HOME/.icons"
