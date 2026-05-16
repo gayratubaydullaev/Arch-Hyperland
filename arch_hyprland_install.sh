@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================
-# Arch Linux + Hyprland Auto-Install Script v2.0
+# Arch Linux + Hyprland Auto-Install Script v3.0
 # ============================================
 # Полностью переписанный, стабильный скрипт
+# Учтены все ошибки предыдущих версий
 # Запускать ПОСЛЕ подключения к Wi-Fi
 
 set -e
@@ -173,8 +174,12 @@ print_success "fstab создан"
 # ============================================
 print_header "Настройка системы"
 
+# Запрашиваем данные ЗАРАНЕЕ
+read -p "Введите имя компьютера (hostname): " HOSTNAME
+read -p "Введите имя пользователя: " USERNAME
+
 # Создаем скрипт настройки
-cat > /mnt/root/setup.sh << 'CHROOT_EOF'
+cat > /mnt/root/setup.sh << CHROOT_EOF
 #!/bin/bash
 set -e
 
@@ -186,7 +191,6 @@ ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 hwclock --systohc
 
 # Hostname
-read -p "Введите имя компьютера (hostname): " HOSTNAME
 echo "$HOSTNAME" > /etc/hostname
 
 cat > /etc/hosts << EOF
@@ -202,7 +206,6 @@ echo "========================================"
 passwd
 
 # Пользователь
-read -p "Введите имя пользователя: " USERNAME
 useradd -m -G wheel,audio,video,optical,storage -s /bin/bash "$USERNAME"
 echo "Установите пароль для $USERNAME:"
 passwd "$USERNAME"
@@ -228,9 +231,6 @@ elif grep -q "AuthenticAMD" /proc/cpuinfo; then
     grub-mkconfig -o /boot/grub/grub.cfg
 fi
 
-# Сохраняем имя пользователя
-echo "$USERNAME" > /root/.username
-
 CHROOT_EOF
 
 chmod +x /mnt/root/setup.sh
@@ -243,13 +243,9 @@ print_success "Базовая система настроена"
 # ============================================
 print_header "Установка Hyprland"
 
-USERNAME=$(cat /mnt/root/.username 2>/dev/null || ls /mnt/home | head -n1)
-
 cat > /mnt/root/hypr.sh << HYPR_EOF
 #!/bin/bash
 set -e
-
-USERNAME=$(cat /root/.username 2>/dev/null || ls /home | head -n1)
 
 # Обновление
 pacman -Syu --noconfirm
@@ -265,13 +261,13 @@ pacman -S --noconfirm hyprland waybar wofi kitty mako polkit-gnome \
     xdg-user-dirs sddm
 
 # Папки пользователя
-su - "\$USERNAME" -c "xdg-user-dirs-update"
+su - "$USERNAME" -c "xdg-user-dirs-update"
 
 # yay
-su - "\$USERNAME" -c "cd /tmp && rm -rf yay && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
+su - "$USERNAME" -c "cd /tmp && rm -rf yay && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
 
 # AUR
-su - "\$USERNAME" -c "yay -S --noconfirm catppuccin-gtk-theme-mocha bibata-cursor-theme-bin swaylock-effects wlogout"
+su - "$USERNAME" -c "yay -S --noconfirm catppuccin-gtk-theme-mocha bibata-cursor-theme-bin swaylock-effects wlogout"
 
 # SDDM
 systemctl enable sddm
@@ -297,7 +293,7 @@ mkdir -p "$USER_HOME/.config/mako"
 mkdir -p "$USER_HOME/.config/wlogout"
 mkdir -p "$USER_HOME/Pictures/wallpapers"
 
-# Hyprland config - УПРОЩЕННЫЙ, без ошибок
+# Hyprland config - УПРОЩЕННЫЙ, без проблемных опций
 cat > "$USER_HOME/.config/hypr/hyprland.conf" << 'EOF'
 # Monitor
 monitor=,preferred,auto,auto
@@ -305,7 +301,6 @@ monitor=,preferred,auto,auto
 # Exec
 exec-once = waybar
 exec-once = mako
-exec-once = swww init
 
 # Input
 input {
@@ -332,12 +327,6 @@ decoration {
         size = 6
         passes = 2
     }
-    shadow {
-        enabled = true
-        range = 15
-        render_power = 3
-        color = rgba(1a1a1aee)
-    }
 }
 
 # Animations
@@ -345,21 +334,7 @@ animations {
     enabled = true
     bezier = myBezier, 0.05, 0.9, 0.1, 1.05
     animation = windows, 1, 7, myBezier
-    animation = windowsOut, 1, 7, default, popin 80%
-    animation = border, 1, 10, default
-    animation = fade, 1, 7, default
     animation = workspaces, 1, 6, default
-}
-
-# Layout
-dwindle {
-    pseudotile = true
-    preserve_split = true
-}
-
-# Gestures
-gestures {
-    workspace_swipe = true
 }
 
 # Misc
@@ -641,6 +616,7 @@ cat > "$USER_HOME/.config/wlogout/layout" << 'EOF'
 }
 EOF
 
+# Wlogout style
 cat > "$USER_HOME/.config/wlogout/style.css" << 'EOF'
 * {
     font-family: "JetBrainsMono Nerd Font", sans-serif;
@@ -717,14 +693,15 @@ print_info "Загрузка обоев..."
 curl -L -o "$USER_HOME/Pictures/wallpapers/wallpaper.jpg" \
     "https://raw.githubusercontent.com/catppuccin/wallpapers/main/misc/gradient-blue.png" 2>/dev/null || true
 
-# Права
-chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config"
-chown -R "$USERNAME:$USERNAME" "$USER_HOME/.local"
-chown -R "$USERNAME:$USERNAME" "$USER_HOME/.zshrc"
-chown -R "$USERNAME:$USERNAME" "$USER_HOME/Pictures"
+# Права через UID (чтобы работало из Live USB)
+UID_GID=$(arch-chroot /mnt id -u "$USERNAME")
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/.config"
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/.local" 2>/dev/null || true
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/.zshrc"
+chown -R "$UID_GID:$UID_GID" "$USER_HOME/Pictures"
 
 # Zsh по умолчанию
-chroot /mnt chsh -s /bin/zsh "$USERNAME"
+arch-chroot /mnt chsh -s /bin/zsh "$USERNAME"
 
 print_success "Конфиги созданы"
 
@@ -736,7 +713,6 @@ print_header "Финализация"
 # Очистка
 rm -f /mnt/root/setup.sh
 rm -f /mnt/root/hypr.sh
-rm -f /mnt/root/.username
 
 # Размонтирование
 umount -R /mnt
